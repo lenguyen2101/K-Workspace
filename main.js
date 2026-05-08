@@ -1695,22 +1695,14 @@ window.addEventListener('resize', () => {
 // INIT
 // ============================================================
 // ============================================================
-// AI RENDER (Gemini 2.0 Flash Image Generation)
+// AI RENDER — Gemini via Vercel Serverless Function
+// API key được quản lý ở Vercel env vars (process.env.GEMINI_API_KEY).
+// Frontend chỉ POST tới /api/generate, không bao giờ thấy key.
 // ============================================================
-const API_KEY_KEY = 'gemini-api-key';
 const RENDER_HISTORY_KEY = 'ai-render-history';
 const RATE_LIMIT_MS = 30000;
-const DEFAULT_API_KEY = ''; // KHÔNG hardcode key trong source — leak public!
-// Thử lần lượt các model image-gen mới nhất; rotate qua khi 404 (Google hay đổi tên).
-const GEMINI_IMAGE_MODELS = [
-  'gemini-3-pro-image-preview',
-  'gemini-3-pro-preview-image',
-  'gemini-3-flash-image-preview',
-  'gemini-2.5-flash-image-preview',
-  'gemini-2.5-flash-image',
-];
-let lastWorkingModel = null; // cache model đầu tiên thành công để lần sau không thử lại từ đầu
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const PROXY_URL = '/api/generate';
+let lastWorkingModel = null; // server trả về model nào đã work để hiển thị info
 
 // Vì giờ Gemini lấy góc nhìn từ canvas screenshot, dropdown giờ chọn STYLE thay vì angle
 const VIEW_ANGLES = [
@@ -1817,14 +1809,6 @@ overall warm cozy atmosphere with 2700K ambient lighting throughout`,
 let aiRateLimitUntil = 0;
 let aiRateLimitTimer = null;
 
-function getApiKey() {
-  return localStorage.getItem(API_KEY_KEY) || DEFAULT_API_KEY || '';
-}
-function maskApiKey(k) {
-  if (!k) return '(chưa có)';
-  if (k.length < 12) return '••••••';
-  return k.slice(0, 6) + '••••••' + k.slice(-4);
-}
 
 function getFurnitureForPrompt(floorIdx) {
   const counts = {};
@@ -1898,7 +1882,7 @@ DO NOT change layout, camera angle, or furniture positions — only upgrade mate
   return prompt;
 }
 
-// Chụp 3D scene hiện tại làm reference image cho Gemini.
+// Chụp 3D scene hiện tại làm reference image.
 // Tạm ẩn helper/highlight box trước khi chụp để ảnh sạch.
 function captureCanvasBase64() {
   const helperWasVisible = selectionHelper?.visible;
@@ -1906,7 +1890,6 @@ function captureCanvasBase64() {
   const boxesVisible = highlightBoxes.map(b => b.visible);
   highlightBoxes.forEach(b => (b.visible = false));
 
-  // Force render với state mới — preserveDrawingBuffer:true đảm bảo canvas còn pixel
   renderer.render(scene, camera);
   const dataUrl = renderer.domElement.toDataURL('image/png');
   const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
@@ -1917,58 +1900,30 @@ function captureCanvasBase64() {
   return base64;
 }
 
-async function tryModel(model, prompt, apiKey, imageBase64) {
-  const url = `${GEMINI_BASE}/${model}:generateContent`;
-  const parts = [];
-  if (imageBase64) {
-    parts.push({ inlineData: { mimeType: 'image/png', data: imageBase64 } });
-  }
-  parts.push({ text: prompt });
-  const response = await fetch(url, {
+// Gọi serverless function — server tự xử lý key + model fallback
+async function generateImage(prompt, imageBase64) {
+  const response = await fetch(PROXY_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, imageBase64 }),
   });
-  if (response.status === 404) return { notFound: true, model };
+
+  let payload;
+  try { payload = await response.json(); }
+  catch { payload = { error: 'Invalid JSON from proxy' }; }
+
   if (!response.ok) {
-    let body = '';
-    try { body = await response.text(); } catch {}
-    const err = new Error(`HTTP ${response.status}`);
+    const err = new Error(payload?.error || `HTTP ${response.status}`);
     err.status = response.status;
-    err.body = body;
-    err.model = model;
+    err.body = payload;
     throw err;
   }
-  const data = await response.json();
-  return { data, model };
-}
 
-async function generateImage(prompt, apiKey, imageBase64) {
-  const order = lastWorkingModel
-    ? [lastWorkingModel, ...GEMINI_IMAGE_MODELS.filter(m => m !== lastWorkingModel)]
-    : GEMINI_IMAGE_MODELS;
-
-  for (const model of order) {
-    try {
-      const result = await tryModel(model, prompt, apiKey, imageBase64);
-      if (result.notFound) {
-        console.warn(`[AI] Model 404: ${model}, thử tiếp...`);
-        continue;
-      }
-      lastWorkingModel = result.model;
-      console.info(`[AI] Generate qua model: ${result.model}`);
-      return result.data;
-    } catch (err) {
-      if (err.status && err.status !== 404) throw err;
-    }
+  if (payload.model) {
+    lastWorkingModel = payload.model;
+    console.info(`[AI] Generate qua model: ${payload.model}`);
   }
-  const err = new Error('Tất cả Gemini image models đều 404. Có thể API key chưa enable cho image gen.');
-  err.status = 404;
-  err.allTried = GEMINI_IMAGE_MODELS;
-  throw err;
+  return payload.data;
 }
 
 function extractImage(response) {
@@ -2101,20 +2056,9 @@ async function handleAiGenerate() {
     showResultError('Tầng "Mái" chưa có config render. Chọn T1–T5.');
     return;
   }
-  let apiKey = getApiKey();
-  if (!apiKey) {
-    promptForApiKey();
-    apiKey = getApiKey();
-    if (!apiKey) {
-      showResultError('Cần nhập Gemini API key trước. Tạo free key tại aistudio.google.com/apikey');
-      return;
-    }
-  }
 
   const va = document.getElementById('aiViewAngle').value;
   const note = document.getElementById('aiCustomNote').value;
-
-  // Chụp 3D scene hiện tại làm reference cho image-to-image
   const imageBase64 = captureCanvasBase64();
   const prompt = buildImagePrompt(currentFloor, va, note, true);
 
@@ -2124,7 +2068,7 @@ async function handleAiGenerate() {
   btn.textContent = 'Đang generate...';
 
   try {
-    const resp = await generateImage(prompt, apiKey, imageBase64);
+    const resp = await generateImage(prompt, imageBase64);
     const result = extractImage(resp);
     if (result.error) {
       showResultText(result.text);
@@ -2142,11 +2086,12 @@ async function handleAiGenerate() {
     startAiRateLimit();
   } catch (err) {
     let msg = err.message || 'Lỗi không xác định';
-    if (err.status === 401 || err.status === 403) msg = 'API key không hợp lệ hoặc chưa enable Generative Language API. Tạo key mới ở aistudio.google.com.';
+    if (err.status === 500 && /GEMINI_API_KEY/i.test(msg)) msg = 'Server chưa set GEMINI_API_KEY. Vào Vercel dashboard → Settings → Environment Variables để add.';
+    else if (err.status === 401 || err.status === 403) msg = 'API key trên server không hợp lệ. Cập nhật env var ở Vercel.';
     else if (err.status === 429) { msg = 'Vượt rate limit. Thử lại sau 60 giây.'; startAiRateLimit(60000); }
-    else if (err.status === 500 || err.status === 503) msg = 'Gemini đang bận. Thử lại sau.';
-    else if (err.status === 400) msg = 'Prompt bị reject (có thể do safety filter). Thử "Copy prompt" và paste sang aistudio.google.com.';
-    else if (err.status === 404 && err.allTried) msg = `Đã thử ${err.allTried.length} model image-gen, tất cả đều 404. Có thể region/API key chưa được enable. Dùng "Copy prompt" → aistudio.google.com.`;
+    else if (err.status === 503 || err.status === 502) msg = 'Gemini đang bận. Thử lại sau.';
+    else if (err.status === 400) msg = 'Prompt bị reject (có thể do safety filter). Dùng "Copy prompt" và paste sang aistudio.google.com.';
+    else if (err.status === 404) msg = 'Tất cả Gemini image models đều 404. Có thể API key chưa enable cho image gen.';
     showResultError(msg);
   } finally {
     btn.disabled = false;
@@ -2174,16 +2119,6 @@ function updateAiGenerateButton() {
   }
 }
 
-function promptForApiKey() {
-  const cur = localStorage.getItem(API_KEY_KEY) || '';
-  const k = window.prompt('Nhập Gemini API Key (lưu localStorage, chỉ gửi tới generativelanguage.googleapis.com):', cur);
-  if (k && k.trim()) {
-    localStorage.setItem(API_KEY_KEY, k.trim());
-    const km = document.getElementById('aiKeyMask');
-    if (km) km.textContent = maskApiKey(k.trim());
-  }
-}
-
 function openAiModal() {
   if (currentFloor < 0 || currentFloor > 4) {
     alert('Chọn 1 tầng (T1–T5) trước khi AI Render.');
@@ -2191,8 +2126,6 @@ function openAiModal() {
   }
   document.getElementById('aiFloorName').textContent = FLOOR_CONFIGS[currentFloor].name;
   document.getElementById('aiCustomNote').value = '';
-  const km = document.getElementById('aiKeyMask');
-  if (km) km.textContent = maskApiKey(getApiKey()) || '(chưa có — bấm Edit)';
   showResultPlaceholder();
   renderAiHistory();
   document.getElementById('aiModal').hidden = false;
@@ -2210,9 +2143,6 @@ function closeAiModal() {
   document.getElementById('aiCloseBtn').addEventListener('click', closeAiModal);
   document.getElementById('aiGenerateBtn').addEventListener('click', handleAiGenerate);
   document.getElementById('aiCopyBtn').addEventListener('click', copyPromptToClipboard);
-  // aiEditKeyBtn đã được ẩn khỏi UI; nếu cần đổi key, dùng DevTools clear localStorage
-  const editBtn = document.getElementById('aiEditKeyBtn');
-  if (editBtn) editBtn.addEventListener('click', promptForApiKey);
   document.getElementById('aiModal').addEventListener('click', (e) => {
     if (e.target.id === 'aiModal') closeAiModal();
   });

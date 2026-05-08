@@ -15,6 +15,12 @@
 node_modules/
 package-lock.json
 
+# Vercel
+.vercel/
+.env
+.env.local
+.env.*.local
+
 # Internal briefs / source artwork (private)
 PROMPT-*.md
 *.pdf

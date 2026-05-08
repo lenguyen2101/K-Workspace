@@ -33,25 +33,43 @@ Interactive 3D model of the K-SPACE office building (10m × 14m, 5 floors + roof
 - Vanilla JS — không build step, không framework
 - **Gemini API** — `gemini-3-pro-image-preview` cho image-to-image render
 
-## Chạy local
+## Deploy lên Vercel
+
+1. Vercel dashboard → **Import** repo `lenguyen2101/K-Workspace`
+2. **Settings → Environment Variables** → add:
+   - Name: `GEMINI_API_KEY`
+   - Value: (key Gemini từ https://aistudio.google.com/apikey)
+   - Apply to: Production + Preview + Development
+3. Deploy
+
+Vercel auto-detect serverless function `/api/generate.js`, frontend gọi qua đó. Key chỉ tồn tại ở env var server-side, không bao giờ vào browser.
+
+## Dev local
+
+Cần Vercel CLI để có serverless function (`/api/generate`):
+
+```bash
+npm i -g vercel
+echo "GEMINI_API_KEY=your_key_here" > .env.local
+vercel dev   # serve ở localhost:3000 (kèm /api/* functions)
+```
+
+Nếu chỉ test 3D scene (không cần AI Render), chạy static server cũng đủ:
 
 ```bash
 python3 -m http.server 8765
-# rồi mở http://localhost:8765
 ```
 
-ES modules cần HTTP server, không chạy được qua `file://`.
+## Architecture
 
-## API Key cho AI Render
+```
+Browser ──POST──▶ /api/generate (Vercel serverless)
+                       │
+                       ├── đọc process.env.GEMINI_API_KEY
+                       └──▶ generativelanguage.googleapis.com
+```
 
-Tính năng AI Render gọi Gemini 3 Pro Image Preview cần API key của bạn:
-
-1. Lấy free key tại https://aistudio.google.com/apikey
-2. Mở app → click **★ AI Render** → modal tự prompt nhập key
-3. Key lưu trong `localStorage` của browser, chỉ gửi tới `generativelanguage.googleapis.com`
-4. Đổi key bất kỳ lúc nào qua nút **Edit** ở footer modal
-
-**Quan trọng**: KHÔNG hardcode key vào source rồi push public — bot scrape GitHub sẽ phát hiện trong vài phút và lạm dụng billing.
+API key chỉ ở Vercel env vars, không hardcode trong source, không vào git history, không leak ra client.
 
 ## Cấu trúc
 
