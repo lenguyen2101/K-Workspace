@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>K-SPACE · Industrial Luxury 3D</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene"></canvas>
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sb-head">
+        <div class="brand">
+          <span class="logo">K</span>
+          <div>
+            <h1>K-SPACE</h1>
+            <p>Industrial Luxury · 5F + Roof</p>
+          </div>
+        </div>
+        <button class="sb-close" id="sidebarToggle" title="Ẩn sidebar">‹</button>
+      </div>
+
+      <section class="sb-section">
+        <h2 class="sb-title">Tầng</h2>
+        <div class="floor-list" id="floorList"></div>
+      </section>
+
+      <section class="sb-section">
+        <h2 class="sb-title">Tính năng đặc biệt</h2>
+        <div id="specialActions"></div>
+      </section>
+
+      <section class="sb-section">
+        <h2 class="sb-title">Nội thất tầng đang xem</h2>
+        <div class="furniture-list" id="furnitureList"></div>
+      </section>
+
+      <section class="sb-section sb-foot">
+        <h2 class="sb-title">View mode</h2>
+        <div class="view-modes">
+          <button class="view-btn active" data-view="solid">Solid</button>
+          <button class="view-btn" data-view="xray">X-ray</button>
+          <button class="view-btn" data-view="wireframe">Wire</button>
+        </div>
+      </section>
+    </aside>
+
+    <!-- TOPBAR -->
+    <header class="topbar">
+      <div class="floor-tabs" id="floorTabs">
+        <button class="tab" data-floor="0">T1</button>
+        <button class="tab" data-floor="1">T2</button>
+        <button class="tab" data-floor="2">T3</button>
+        <button class="tab" data-floor="3">T4</button>
+        <button class="tab" data-floor="4">T5</button>
+        <button class="tab" data-floor="5">Mái</button>
+        <button class="tab tab--all" data-floor="-1">Tất cả</button>
+      </div>
+      <div class="actions">
+        <button id="aiRenderBtn" class="btn btn--ai" title="Generate ảnh photorealistic bằng Gemini AI">★ AI Render</button>
+        <button id="explodeBtn" class="btn">Tách tầng</button>
+        <button id="resetBtn" class="btn btn--ghost">Reset</button>
+      </div>
+    </header>
+
+    <!-- INFO PANEL (right) -->
+    <aside class="info-panel" id="infoPanel">
+      <div class="info-head">
+        <span class="info-tag" id="infoTag">Tổng quan</span>
+        <h2 id="infoTitle">K-SPACE</h2>
+      </div>
+      <div class="info-body" id="infoBody"></div>
+      <div class="comment-section" id="commentSection"></div>
+      <div class="legend">
+        <div><span class="sw" style="background:#8B5E3C"></span>Gạch mộc (tường trái)</div>
+        <div><span class="sw" style="background:#5C3D2E"></span>Walnut (phải + sau)</div>
+        <div><span class="sw" style="background:#4A4843"></span>Polished concrete sàn</div>
+        <div><span class="sw" style="background:#9A9894"></span>Inox xước</div>
+        <div><span class="sw" style="background:#A8D5C2;opacity:.7"></span>Kính teal</div>
+      </div>
+    </aside>
+
+    <!-- TOOLTIP (floating, on click furniture) -->
+    <div class="tooltip" id="tooltip"></div>
+
+    <!-- AI RENDER MODAL -->
+    <div class="ai-modal-overlay" id="aiModal" hidden>
+      <div class="ai-modal" role="dialog" aria-modal="true">
+        <header class="ai-head">
+          <div>
+            <span class="ai-tag">AI Render · Gemini</span>
+            <h3>AI Render — <span id="aiFloorName">Tầng 1</span></h3>
+          </div>
+          <button class="ai-close" id="aiCloseBtn" title="Đóng (Esc)">✕</button>
+        </header>
+
+        <div class="ai-form">
+          <p class="ai-hint">
+            🎯 Sẽ dùng <b>góc nhìn 3D hiện tại</b> làm reference. Đóng modal → xoay/zoom 3D scene đến góc đẹp → mở lại modal & Generate.
+          </p>
+
+          <label class="ai-label">Style render</label>
+          <select id="aiViewAngle" class="ai-input"></select>
+
+          <label class="ai-label">Yêu cầu thêm <span class="muted">(tuỳ chọn)</span></label>
+          <textarea id="aiCustomNote" class="ai-input" rows="2"
+            placeholder="VD: thêm 2-3 người đang họp, đổi tông gỗ sáng hơn..."></textarea>
+
+          <div class="ai-actions">
+            <button id="aiGenerateBtn" class="ai-generate-btn">★ Generate</button>
+            <button id="aiCopyBtn" class="btn btn--ghost">Copy prompt</button>
+          </div>
+        </div>
+
+        <div class="ai-result" id="aiResult"></div>
+
+        <div class="ai-history-wrap">
+          <span class="ai-label">History (3 gần nhất)</span>
+          <div class="ai-history" id="aiHistory"></div>
+        </div>
+
+        <footer class="ai-foot">
+          <span>API Key: <code id="aiKeyMask">●●●●●●</code></span>
+          <button id="aiEditKeyBtn" class="ai-edit-key">Edit</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- HINT -->
+    <div class="hint">
+      <kbd>Drag</kbd> xoay · <kbd>Scroll</kbd> zoom · <kbd>Click</kbd> chọn nội thất · <kbd>Esc</kbd> bỏ chọn
+    </div>
+
+    <div class="loader" id="loader"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

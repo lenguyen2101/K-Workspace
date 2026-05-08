@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Dependencies (nếu sau này có)
+node_modules/
+package-lock.json
+
+# Internal briefs / source artwork (private)
+PROMPT-*.md
+*.pdf
+
+# Logs
+*.log
